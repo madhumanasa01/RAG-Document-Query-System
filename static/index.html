@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Document Query</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e3e3e0; --accent:#2f5bd3; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=text] { flex: 1; min-width: 200px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+  button { padding: 10px 16px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+  button.ghost { background: none; color: var(--muted); padding: 4px 8px; }
+  ul { list-style: none; padding: 0; margin: 12px 0 0; }
+  li.doc { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding: 8px 0; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .answer { white-space: pre-wrap; }
+  .source { border-left: 3px solid var(--line); padding: 6px 10px; margin-top: 10px; font-size: 13px; }
+  .source b { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>RAG Document Query</h1>
+  <p class="sub">Upload PDFs, Word files, text or scanned images, then ask questions answered from their content.</p>
+
+  <section>
+    <h2>Documents</h2>
+    <div class="row">
+      <input type="file" id="file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff">
+      <button id="upload">Upload</button>
+    </div>
+    <div class="meta" id="uploadStatus"></div>
+    <ul id="docs"></ul>
+  </section>
+
+  <section>
+    <h2>Ask a question</h2>
+    <form class="row" id="ask">
+      <input type="text" id="question" placeholder="e.g. What is the warranty period?" required minlength="3">
+      <button>Ask</button>
+    </form>
+    <div id="result"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function loadDocs() {
+  const docs = await (await fetch("/documents")).json();
+  $("docs").innerHTML = docs.map((d) => `
+    <li class="doc"><span>${esc(d.filename)}
+      <span class="meta">· ${d.pages} page(s) · ${d.chunks} chunks${d.ocr_pages ? ` · ${d.ocr_pages} OCR` : ""}</span></span>
+      <button class="ghost" data-id="${d.doc_id}">Remove</button></li>`).join("")
+    || '<li class="meta">No documents yet.</li>';
+}
+
+$("docs").addEventListener("click", async (e) => {
+  const id = e.target.dataset.id;
+  if (!id) return;
+  await fetch(`/documents/${id}`, { method: "DELETE" });
+  loadDocs();
+});
+
+$("upload").addEventListener("click", async () => {
+  const file = $("file").files[0];
+  if (!file) return;
+  $("uploadStatus").textContent = "Processing…";
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch("/documents", { method: "POST", body });
+  const data = await res.json();
+  $("uploadStatus").textContent = res.ok
+    ? `Indexed ${data.chunks} chunks from ${data.pages} page(s).`
+    : `Error: ${data.detail}`;
+  loadDocs();
+});
+
+$("ask").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("result").innerHTML = '<p class="meta">Searching…</p>';
+  const res = await fetch("/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: $("question").value }),
+  });
+  const data = await res.json();
+  if (!res.ok) { $("result").textContent = JSON.stringify(data.detail); return; }
+  $("result").innerHTML = `
+    <p class="answer">${esc(data.answer)}</p>
+    <p class="meta">${data.mode} answer · retrieval ${data.retrieval_ms} ms · total ${data.total_ms} ms</p>
+    ${data.sources.map((s) => `
+      <div class="source"><b>[${s.ref}]</b> ${esc(s.filename)}, page ${s.page}
+        <span class="meta">· score ${s.score}${s.ocr ? " · OCR" : ""}</span><br>${esc(s.excerpt)}…</div>`).join("")}`;
+});
+
+loadDocs();
+</script>
+</body>
+</html>

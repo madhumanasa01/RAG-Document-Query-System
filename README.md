@@ -48,6 +48,32 @@ flowchart LR
     end
 ```
 
+### Uploading a scanned document, then asking about it
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as FastAPI
+    participant P as Parser + OCR
+    participant E as SBERT embedder
+    participant V as FAISS store
+    participant G as Answer generator
+    U->>A: POST /documents (service_card_scan.png)
+    A->>P: parse file
+    P-->>A: page text (Tesseract OCR, no text layer)
+    A->>E: embed sentence-aware chunks
+    E-->>A: normalised vectors
+    A->>V: add vectors + chunk metadata, persist to disk
+    A-->>U: doc_id, pages, OCR pages, chunks
+    U->>A: POST /query "How often should the air filter be cleaned?"
+    A->>E: embed question
+    A->>V: top-k inner-product search (score threshold, optional doc filter)
+    V-->>A: chunks with file, page, score
+    A->>G: question + retrieved excerpts
+    G-->>A: grounded answer with [n] citations (LLM or extractive)
+    A-->>U: answer + sources + retrieval / total ms
+```
+
 ## Retrieval benchmark
 
 `scripts/evaluate.py` indexes the sample documents in `data/sample/` and runs 30 labelled questions from `eval/questions.json`, many of them paraphrased so they don't share keywords with the answer. A question counts as a hit when a retrieved chunk contains the expected answer span.
